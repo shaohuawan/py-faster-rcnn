@@ -34,7 +34,7 @@ def get_minibatch(roidb, num_classes):
         assert len(im_scales) == 1, "Single batch only"
         assert len(roidb) == 1, "Single batch only"
         # gt boxes: (x1, y1, x2, y2, cls)
-        gt_inds = np.where(roidb[0]['gt_classes'] != 0)[0]
+        gt_inds = np.where(roidb[0]['gt_classes'] >= 0)[0] # get all classes, including hard negatives whose label is 0
         gt_boxes = np.empty((len(gt_inds), 5), dtype=np.float32)
         gt_boxes[:, 0:4] = roidb[0]['boxes'][gt_inds, :] * im_scales[0]
         gt_boxes[:, 4] = roidb[0]['gt_classes'][gt_inds]
@@ -90,7 +90,7 @@ def _sample_rois(roidb, fg_rois_per_image, rois_per_image, num_classes):
     rois = roidb['boxes']
 
     # Select foreground RoIs as those with >= FG_THRESH overlap
-    fg_inds = np.where(overlaps >= cfg.TRAIN.FG_THRESH)[0]
+    fg_inds = np.where( (overlaps >= cfg.TRAIN.FG_THRESH) & (labels>0) )[0]
     # Guard against the case when an image has fewer than fg_rois_per_image
     # foreground RoIs
     fg_rois_per_this_image = np.minimum(fg_rois_per_image, fg_inds.size)
@@ -100,8 +100,10 @@ def _sample_rois(roidb, fg_rois_per_image, rois_per_image, num_classes):
                 fg_inds, size=fg_rois_per_this_image, replace=False)
 
     # Select background RoIs as those within [BG_THRESH_LO, BG_THRESH_HI)
-    bg_inds = np.where((overlaps < cfg.TRAIN.BG_THRESH_HI) &
-                       (overlaps >= cfg.TRAIN.BG_THRESH_LO))[0]
+    bg_inds = np.where( ((overlaps < cfg.TRAIN.BG_THRESH_HI) & (overlaps >= cfg.TRAIN.BG_THRESH_LO) & (labels>0) ) | 
+                        ((overlaps >= cfg.TRAIN.FG_THRESH) & (labels==0)) 
+                      )[0]
+    hardneg_inds = np.where( (overlaps >= cfg.TRAIN.FG_THRESH) & (labels==0) )[0]
     # Compute number of background RoIs to take from this image (guarding
     # against there being fewer than desired)
     bg_rois_per_this_image = rois_per_image - fg_rois_per_this_image
@@ -109,8 +111,14 @@ def _sample_rois(roidb, fg_rois_per_image, rois_per_image, num_classes):
                                         bg_inds.size)
     # Sample foreground regions without replacement
     if bg_inds.size > 0:
-        bg_inds = npr.choice(
-                bg_inds, size=bg_rois_per_this_image, replace=False)
+        if len(hardneg_inds)<bg_rois_per_this_image:
+            bg_inds = np.array( list(set(bg_inds) - set(hardneg_inds)) )
+            bg_inds = npr.choice(
+                      bg_inds, size=bg_rois_per_this_image-len(hardneg_inds), replace=False)
+            bg_inds = np.append(bg_inds, hardneg_inds)
+        else:
+            bg_inds = npr.choice(
+                      hardneg_inds, size=bg_rois_per_this_image, replace=False)
 
     # The indices that we're selecting (both fg and bg)
     keep_inds = np.append(fg_inds, bg_inds)
@@ -123,6 +131,36 @@ def _sample_rois(roidb, fg_rois_per_image, rois_per_image, num_classes):
 
     bbox_targets, bbox_inside_weights = _get_bbox_regression_labels(
             roidb['bbox_targets'][keep_inds, :], num_classes)
+
+    '''
+    import cv2
+    import os.path
+    im = cv2.imread( roidb['image'])
+    imname = 'output/' + os.path.basename(roidb['image'])
+    for ii in range( rois.shape[0] ):
+        x1 = int( rois[ii,0]) 
+        y1 = int( rois[ii,1])
+        x2 = int( rois[ii,2])
+        y2 = int( rois[ii,3])
+        if roidb['flipped']:
+            x1 = roidb['width']-x1
+            x2 = roidb['width']-x2
+        if labels[ii]==0:
+            cv2.rectangle(im, (x1, y1), (x2, y2) , (255,0,0), 1)
+        else:
+            cv2.rectangle(im, (x1, y1), (x2, y2) , (0,255,0), 1)
+    for ii in range( len(hardneg_inds) ):
+        x1 = int( roidb['boxes'][ hardneg_inds[ii],0 ])
+        y1 = int( roidb['boxes'][ hardneg_inds[ii],1 ])
+        x2 = int( roidb['boxes'][ hardneg_inds[ii],2 ])
+        y2 = int( roidb['boxes'][ hardneg_inds[ii],3 ])
+        if roidb['flipped']:
+            x1 = roidb['width']-x1
+            x2 = roidb['width']-x2
+        cv2.rectangle(im, (x1, y1), (x2, y2) , (0,0,255), 1)
+    cv2.imwrite( imname, im )
+    print 'shaohua:  ' + imname + "   "  + str( len(hardneg_inds) ) + "   "  + str( len(bg_inds) ) + "   "  + str( rois.shape[0] )
+    '''
 
     return labels, overlaps, rois, bbox_targets, bbox_inside_weights
 

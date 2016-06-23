@@ -78,6 +78,8 @@ class AnchorTargetLayer(caffe.Layer):
         height, width = bottom[0].data.shape[-2:]
         # GT boxes (x1, y1, x2, y2, label)
         gt_boxes = bottom[1].data
+        gt_hardneg_ind     = np.where( gt_boxes[:,-1] == 0 )[0]  # hard negative examples are denoted by label 0 
+        gt_non_hardneg_ind = np.where( gt_boxes[:,-1] >  0 )[0]
         # im_info
         im_info = bottom[2].data[0, :]
 
@@ -132,12 +134,12 @@ class AnchorTargetLayer(caffe.Layer):
         overlaps = bbox_overlaps(
             np.ascontiguousarray(anchors, dtype=np.float),
             np.ascontiguousarray(gt_boxes, dtype=np.float))
-        argmax_overlaps = overlaps.argmax(axis=1)
-        max_overlaps = overlaps[np.arange(len(inds_inside)), argmax_overlaps]
-        gt_argmax_overlaps = overlaps.argmax(axis=0)
-        gt_max_overlaps = overlaps[gt_argmax_overlaps,
-                                   np.arange(overlaps.shape[1])]
-        gt_argmax_overlaps = np.where(overlaps == gt_max_overlaps)[0]
+        argmax_overlaps = overlaps[:, gt_non_hardneg_ind].argmax(axis=1)
+        max_overlaps = overlaps[:, gt_non_hardneg_ind][np.arange(len(inds_inside)), argmax_overlaps]
+        gt_argmax_overlaps = overlaps[:, gt_non_hardneg_ind].argmax(axis=0)
+        gt_max_overlaps = overlaps[gt_argmax_overlaps, 
+                                   gt_non_hardneg_ind]
+        gt_argmax_overlaps = np.where(overlaps[:,gt_non_hardneg_ind] == gt_max_overlaps)[0]
 
         if not cfg.TRAIN.RPN_CLOBBER_POSITIVES:
             # assign bg labels first so that positive labels can clobber them
@@ -153,6 +155,12 @@ class AnchorTargetLayer(caffe.Layer):
             # assign bg labels last so that negative labels can clobber positives
             labels[max_overlaps < cfg.TRAIN.RPN_NEGATIVE_OVERLAP] = 0
 
+        # assign bg labels to hard negative examples
+        if len(gt_hardneg_ind)>0:
+            argmax_overlaps_hardneg = overlaps[:, gt_hardneg_ind].argmax(axis=1)
+            max_overlaps_hardneg = overlaps[:, gt_hardneg_ind][np.arange(len(inds_inside)), argmax_overlaps_hardneg]
+            labels[max_overlaps_hardneg >= cfg.TRAIN.RPN_POSITIVE_OVERLAP] = 0
+
         # subsample positive labels if we have too many
         num_fg = int(cfg.TRAIN.RPN_FG_FRACTION * cfg.TRAIN.RPN_BATCHSIZE)
         fg_inds = np.where(labels == 1)[0]
@@ -165,9 +173,16 @@ class AnchorTargetLayer(caffe.Layer):
         num_bg = cfg.TRAIN.RPN_BATCHSIZE - np.sum(labels == 1)
         bg_inds = np.where(labels == 0)[0]
         if len(bg_inds) > num_bg:
-            disable_inds = npr.choice(
-                bg_inds, size=(len(bg_inds) - num_bg), replace=False)
-            labels[disable_inds] = -1
+            if len(gt_hardneg_ind)>0:
+                hardneg_ind = np.where(max_overlaps_hardneg >= cfg.TRAIN.RPN_POSITIVE_OVERLAP)[0]
+                bg_inds = np.asarray( list( set(bg_inds) - set(hardneg_ind) ) )
+                disable_inds = npr.choice(
+                    bg_inds, size=(len(bg_inds) - num_bg + len(hardneg_ind) ), replace=False)
+                labels[disable_inds] = -1
+            else:
+                disable_inds = npr.choice(
+                    bg_inds, size=(len(bg_inds) - num_bg ), replace=False)
+                labels[disable_inds] = -1
             #print "was %s inds, disabling %s, now %s inds" % (
                 #len(bg_inds), len(disable_inds), np.sum(labels == 0))
 

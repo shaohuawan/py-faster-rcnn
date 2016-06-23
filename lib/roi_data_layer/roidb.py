@@ -40,8 +40,9 @@ def prepare_roidb(imdb):
         zero_inds = np.where(max_overlaps == 0)[0]
         assert all(max_classes[zero_inds] == 0)
         # max overlap > 0 => class should not be zero (must be a fg class)
-        nonzero_inds = np.where(max_overlaps > 0)[0]
-        assert all(max_classes[nonzero_inds] != 0)
+        # For hard neg mining, max_overlap>0 could also indicate a hard bg class
+#        nonzero_inds = np.where(max_overlaps > 0)[0]
+#        assert all(max_classes[nonzero_inds] != 0)
 
 def add_bbox_regression_targets(roidb):
     """Add information needed to train bounding-box regressors."""
@@ -109,12 +110,12 @@ def add_bbox_regression_targets(roidb):
 def _compute_targets(rois, overlaps, labels):
     """Compute bounding-box regression targets for an image."""
     # Indices of ground-truth ROIs
-    gt_inds = np.where(overlaps == 1)[0]
+    gt_inds = np.where( (overlaps == 1) & (labels != 0) )[0]
     if len(gt_inds) == 0:
         # Bail if the image has no ground-truth ROIs
         return np.zeros((rois.shape[0], 5), dtype=np.float32)
     # Indices of examples for which we try to make predictions
-    ex_inds = np.where(overlaps >= cfg.TRAIN.BBOX_THRESH)[0]
+    ex_inds = np.where( (overlaps >= cfg.TRAIN.BBOX_THRESH) & (labels != 0) )[0]
 
     # Get IoU overlap between each ex ROI and gt ROI
     ex_gt_overlaps = bbox_overlaps(
