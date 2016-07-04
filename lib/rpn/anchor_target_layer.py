@@ -134,32 +134,41 @@ class AnchorTargetLayer(caffe.Layer):
         overlaps = bbox_overlaps(
             np.ascontiguousarray(anchors, dtype=np.float),
             np.ascontiguousarray(gt_boxes, dtype=np.float))
-        argmax_overlaps = overlaps[:, gt_non_hardneg_ind].argmax(axis=1)
-        max_overlaps = overlaps[:, gt_non_hardneg_ind][np.arange(len(inds_inside)), argmax_overlaps]
-        gt_argmax_overlaps = overlaps[:, gt_non_hardneg_ind].argmax(axis=0)
-        gt_max_overlaps = overlaps[gt_argmax_overlaps, 
-                                   gt_non_hardneg_ind]
-        gt_argmax_overlaps = np.where(overlaps[:,gt_non_hardneg_ind] == gt_max_overlaps)[0]
 
-        if not cfg.TRAIN.RPN_CLOBBER_POSITIVES:
-            # assign bg labels first so that positive labels can clobber them
-            labels[max_overlaps < cfg.TRAIN.RPN_NEGATIVE_OVERLAP] = 0
-
-        # fg label: for each gt, anchor with highest overlap
-        labels[gt_argmax_overlaps] = 1
-
-        # fg label: above threshold IOU
-        labels[max_overlaps >= cfg.TRAIN.RPN_POSITIVE_OVERLAP] = 1
-
-        if cfg.TRAIN.RPN_CLOBBER_POSITIVES:
-            # assign bg labels last so that negative labels can clobber positives
-            labels[max_overlaps < cfg.TRAIN.RPN_NEGATIVE_OVERLAP] = 0
+        if len(gt_non_hardneg_ind)>0:
+            argmax_overlaps = overlaps[:, gt_non_hardneg_ind].argmax(axis=1)
+            max_overlaps = overlaps[:, gt_non_hardneg_ind][np.arange(len(inds_inside)), argmax_overlaps]
+            gt_argmax_overlaps = overlaps[:, gt_non_hardneg_ind].argmax(axis=0)
+            gt_max_overlaps = overlaps[gt_argmax_overlaps, 
+                                       gt_non_hardneg_ind]
+            gt_argmax_overlaps = np.where(overlaps[:,gt_non_hardneg_ind] == gt_max_overlaps)[0]
+    
+            if not cfg.TRAIN.RPN_CLOBBER_POSITIVES:
+                # assign bg labels first so that positive labels can clobber them
+                labels[max_overlaps < cfg.TRAIN.RPN_NEGATIVE_OVERLAP] = 0
+    
+            # fg label: for each gt, anchor with highest overlap
+            labels[gt_argmax_overlaps] = 1
+    
+            # fg label: above threshold IOU
+            labels[max_overlaps >= cfg.TRAIN.RPN_POSITIVE_OVERLAP] = 1
+    
+            if cfg.TRAIN.RPN_CLOBBER_POSITIVES:
+                # assign bg labels last so that negative labels can clobber positives
+                labels[max_overlaps < cfg.TRAIN.RPN_NEGATIVE_OVERLAP] = 0
 
         # assign bg labels to hard negative examples
+
         if len(gt_hardneg_ind)>0:
             argmax_overlaps_hardneg = overlaps[:, gt_hardneg_ind].argmax(axis=1)
             max_overlaps_hardneg = overlaps[:, gt_hardneg_ind][np.arange(len(inds_inside)), argmax_overlaps_hardneg]
             labels[max_overlaps_hardneg >= cfg.TRAIN.RPN_POSITIVE_OVERLAP] = 0
+
+            gt_argmax_overlaps_hardneg = overlaps[:, gt_hardneg_ind].argmax(axis=0)
+            gt_max_overlaps_hardneg = overlaps[gt_argmax_overlaps_hardneg, 
+                                               gt_hardneg_ind]
+            gt_argmax_overlaps_hardneg = np.where(overlaps[:,gt_hardneg_ind] == gt_max_overlaps_hardneg)[0]
+            labels[gt_argmax_overlaps_hardneg] = 0
 
         # subsample positive labels if we have too many
         num_fg = int(cfg.TRAIN.RPN_FG_FRACTION * cfg.TRAIN.RPN_BATCHSIZE)
@@ -187,7 +196,8 @@ class AnchorTargetLayer(caffe.Layer):
                 #len(bg_inds), len(disable_inds), np.sum(labels == 0))
 
         bbox_targets = np.zeros((len(inds_inside), 4), dtype=np.float32)
-        bbox_targets = _compute_targets(anchors, gt_boxes[argmax_overlaps, :])
+        if len(gt_non_hardneg_ind)>0:
+            bbox_targets = _compute_targets(anchors, gt_boxes[argmax_overlaps, :])
 
         bbox_inside_weights = np.zeros((len(inds_inside), 4), dtype=np.float32)
         bbox_inside_weights[labels == 1, :] = np.array(cfg.TRAIN.RPN_BBOX_INSIDE_WEIGHTS)

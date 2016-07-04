@@ -104,6 +104,11 @@ def _sample_rois(roidb, fg_rois_per_image, rois_per_image, num_classes):
                         ((overlaps >= cfg.TRAIN.FG_THRESH) & (labels==0)) 
                       )[0]
     hardneg_inds = np.where( (overlaps >= cfg.TRAIN.FG_THRESH) & (labels==0) )[0]
+    
+    if len(bg_inds)==0:
+        bg_inds = np.where( (overlaps < cfg.TRAIN.BG_THRESH_HI) & (overlaps >= cfg.TRAIN.BG_THRESH_LO) & (labels==0) )[0]
+        hardneg_inds = bg_inds 
+
     # Compute number of background RoIs to take from this image (guarding
     # against there being fewer than desired)
     bg_rois_per_this_image = rois_per_image - fg_rois_per_this_image
