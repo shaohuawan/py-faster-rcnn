@@ -229,14 +229,14 @@ def apply_nms(all_boxes, thresh):
 def save_hardneg( detections, gt_boxes, gt_cls_names, hardneg_save_path ):
 # save both groundtruth and hard negs 
 #   detections:   the detected bbox 
-#   gt_boxes:     the groundtruth fg bbox
+#   gt_boxes:     the groundtruth bbox (could be the mixture of groundtruth fg and bg bboxs)
 #   gt_cls_names: the class names corresponding to gt_boxes
     overlaps = bbox_overlaps(
         np.ascontiguousarray(detections, dtype=np.float),
         np.ascontiguousarray(gt_boxes, dtype=np.float))
     argmax_overlaps = overlaps.argmax(axis=1)
     max_overlaps = overlaps[np.arange(len(argmax_overlaps)), argmax_overlaps]
-    hardneg_inds = np.where( max_overlaps == 0 )[0]
+    hardneg_inds = np.where( max_overlaps <= 0.1 )[0]
     hardnegs = detections[hardneg_inds, :]
 
     xml_f = open(hardneg_save_path, 'w')
@@ -281,16 +281,16 @@ def save_hardneg( detections, gt_boxes, gt_cls_names, hardneg_save_path ):
     xml_f.write( '</annotation>')
     xml_f.close()
 
-def vis_hardneg(im, im_name, detections, gt_boxes):
+def vis_hardneg(im, im_name, detections, gt_boxes, gt_cls_names):
     """Visual debugging of detections."""
-#   visualize both the hardnegs (in red) and groundtruth fg bbox (in green)
+#   visualize both the hardnegs (in red) and groundtruth fg&bg bbox (in green)
 
     overlaps = bbox_overlaps(
         np.ascontiguousarray(detections, dtype=np.float),
         np.ascontiguousarray(gt_boxes, dtype=np.float))
     argmax_overlaps = overlaps.argmax(axis=1)
     max_overlaps = overlaps[np.arange(len(argmax_overlaps)), argmax_overlaps]
-    hardneg_inds = np.where( max_overlaps == 0 )[0]
+    hardneg_inds = np.where( max_overlaps <= 0.1 )[0]
     hardnegs = detections[hardneg_inds, :]
 
     import matplotlib.pyplot as plt
@@ -305,6 +305,7 @@ def vis_hardneg(im, im_name, detections, gt_boxes):
                           bbox[3] - bbox[1], fill=False,
                           edgecolor='r', linewidth=3)
                 )
+        plt.annotate( 'hardneg', (bbox[0], bbox[1]))
     for i in xrange( gt_boxes.shape[0] ):
         bbox = gt_boxes[i, :4]
         plt.gca().add_patch(
@@ -313,6 +314,7 @@ def vis_hardneg(im, im_name, detections, gt_boxes):
                           bbox[3] - bbox[1], fill=False,
                           edgecolor='g', linewidth=3)
                 )
+        plt.annotate( gt_cls_names[i], (bbox[0], bbox[1]))
     plt.show()
     if not os.path.exists( os.path.join( 'output', 'hardnegs' ) ):
         os.mkdir( os.path.join( 'output', 'hardnegs') )
@@ -349,12 +351,10 @@ def test_net(net, imdb, max_per_image=100, thresh=0.05, vis=False):
             # ground truth.
             box_proposals = roidb[i]['boxes'][roidb[i]['gt_classes'] == 0]
 
-        # get the fg groundtruth bbox
+        # get the fg/bg groundtruth bbox
         gt_boxes = imdb.roidb[i]['boxes']
         gt_classes = imdb.roidb[i]['gt_classes']
-        gt_fg_boxes_ind = np.where( gt_classes != 0 )[0]
-        gt_fg_boxes = gt_boxes[gt_fg_boxes_ind, :]
-        gt_fg_cls_names = map(lambda cls: imdb._classes[cls], gt_classes[gt_fg_boxes_ind] )
+        gt_cls_names = map(lambda cls: imdb._classes[cls], gt_classes )
 
         im = cv2.imread(imdb.image_path_at(i))
         _t['im_detect'].tic()
@@ -371,7 +371,7 @@ def test_net(net, imdb, max_per_image=100, thresh=0.05, vis=False):
                 .astype(np.float32, copy=False)
             keep = nms(cls_dets, cfg.TEST.NMS)
             cls_dets = cls_dets[keep, :]
-            if vis:
+            if 0:
                 vis_detections(im, imdb.classes[j], cls_dets)
             all_boxes[j][i] = cls_dets
 
@@ -399,15 +399,15 @@ def test_net(net, imdb, max_per_image=100, thresh=0.05, vis=False):
         hardneg_save_dir = os.path.join( 
                                         os.path.dirname( 
                                            os.path.dirname( imdb.image_path_at(i) ) ), 
-                                        'Hardneg_Ann' )
+                                        'HardnegAnn' )
         if not os.path.exists( hardneg_save_dir ):
             os.mkdir( hardneg_save_dir )
         hardneg_save_path = os.path.join( hardneg_save_dir,
                                           os.path.splitext( os.path.basename(imdb.image_path_at(i)) )[0] + '.xml' )
 
-        save_hardneg( detections_im_i[:,:4], gt_fg_boxes, gt_fg_cls_names, hardneg_save_path )
-        if 1:
-            vis_hardneg(im, imdb.image_path_at(i), detections_im_i[:,:4], gt_fg_boxes)
+        save_hardneg( detections_im_i[:,:4], gt_boxes, gt_cls_names, hardneg_save_path )
+        if vis:
+            vis_hardneg(im, imdb.image_path_at(i), detections_im_i[:,:4], gt_boxes, gt_cls_names)
 
     det_file = os.path.join(output_dir, 'detections.pkl')
     with open(det_file, 'wb') as f:
